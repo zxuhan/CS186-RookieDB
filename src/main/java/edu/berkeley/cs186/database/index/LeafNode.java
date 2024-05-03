@@ -158,6 +158,10 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
+        if (keys.indexOf(key) != -1) {
+            throw new BPlusTreeException("the key is already existed!");
+        }
+
         int index = InnerNode.numLessThanEqual(key, keys);
         keys.add(index, key);
         rids.add(index, rid);
@@ -177,7 +181,7 @@ class LeafNode extends BPlusNode {
             rids = leftRids;
 
             sync();
-            return Optional.of(new Pair(splitKey, newRightLeaf.getPage().getPageNum()));
+            return Optional.of(new Pair<>(splitKey, newRightLeaf.getPage().getPageNum()));
         } else {
             sync();
             return Optional.empty();
@@ -188,8 +192,28 @@ class LeafNode extends BPlusNode {
     @Override
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
+        int maxNum = (int) Math.ceil(2 * metadata.getOrder() * fillFactor);
+        while (data.hasNext()) {
+            Pair<DataBox, RecordId> input = data.next();
+            if (keys.size() == maxNum) {
+                List<DataBox> rightKeys = new ArrayList<>();
+                List<RecordId> rightRids = new ArrayList<>();
+                rightKeys.add(input.getFirst());
+                rightRids.add(input.getSecond());
 
+                DataBox splitKey = rightKeys.get(0);
 
+                LeafNode newRightLeaf = new LeafNode(metadata, bufferManager, rightKeys, rightRids, Optional.empty(), treeContext);
+                this.rightSibling = Optional.of(newRightLeaf.getPage().getPageNum());
+
+                sync();
+                return Optional.of(new Pair<>(splitKey, newRightLeaf.getPage().getPageNum()));
+            } else {
+                keys.add(input.getFirst());
+                rids.add(input.getSecond());
+            }
+        }
+        sync();
         return Optional.empty();
     }
 
