@@ -146,32 +146,49 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
+        int index = InnerNode.numLessThanEqual(key, keys);
+        keys.add(index, key);
+        rids.add(index, rid);
 
-        return Optional.empty();
+        if (keys.size() == 2 * metadata.getOrder() + 1) {
+            List<DataBox> leftKeys = keys.subList(0, metadata.getOrder());
+            List<RecordId> leftRids = rids.subList(0, metadata.getOrder());
+
+            List<DataBox> rightKeys = keys.subList(metadata.getOrder(), keys.size());
+            List<RecordId> rightRids = rids.subList(metadata.getOrder(), keys.size());
+
+            DataBox splitKey = rightKeys.get(0);
+            LeafNode newRightLeaf = new LeafNode(metadata, bufferManager, rightKeys, rightRids, rightSibling, treeContext);
+            this.rightSibling = Optional.of(newRightLeaf.getPage().getPageNum());
+
+            keys = leftKeys;
+            rids = leftRids;
+
+            sync();
+            return Optional.of(new Pair(splitKey, newRightLeaf.getPage().getPageNum()));
+        } else {
+            sync();
+            return Optional.empty();
+        }
     }
 
     // See BPlusNode.bulkLoad.
     @Override
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
-        // TODO(proj2): implement
+
 
         return Optional.empty();
     }
@@ -179,9 +196,12 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
-        // TODO(proj2): implement
-
-        return;
+        int index = keys.indexOf(key);
+        if (index != -1) {
+            keys.remove(index);
+            rids.remove(index);
+        }
+        sync();
     }
 
     // Iterators ///////////////////////////////////////////////////////////////
