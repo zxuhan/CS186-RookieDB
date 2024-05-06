@@ -158,7 +158,7 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        if (keys.indexOf(key) != -1) {
+        if (keys.contains(key)) {
             throw new BPlusTreeException("the key is already existed!");
         }
 

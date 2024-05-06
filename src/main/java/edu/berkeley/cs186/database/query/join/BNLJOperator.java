@@ -132,14 +132,17 @@ public class BNLJOperator extends JoinOperator {
                     if (compare(leftRecord, rightRecord) == 0) {
                         return leftRecord.concat(rightRecord);
                     }
-                } else if (leftBlockIterator.hasNext()) { // Move to next left record if no more right record
+                } else if (leftBlockIterator.hasNext()) {
+                    // Move to next left record if no more right record
                     leftRecord = leftBlockIterator.next();
                     rightPageIterator.reset();
-                } else if (rightSourceIterator.hasNext()) { // Move to next right page
+                } else if (rightSourceIterator.hasNext()) {
+                    // Move to next right page
                     fetchNextRightPage();
                     leftBlockIterator.reset();
                     leftRecord = leftBlockIterator.next();
-                } else if (leftSourceIterator.hasNext()) { // Move to next left block
+                } else if (leftSourceIterator.hasNext()) {
+                    // Move to next left block
                     fetchNextLeftBlock();
                     rightSourceIterator.reset();
                     fetchNextRightPage();

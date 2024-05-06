@@ -202,9 +202,7 @@ public class BPlusTree {
 
         LeafNode leaf = root.getLeftmostLeaf();
         Iterator<RecordId> leafIterator = leaf.scanAll();
-        BPlusTreeIterator treeIterator = new BPlusTreeIterator(leaf, leafIterator);
-
-        return treeIterator;
+        return new BPlusTreeIterator(leaf, leafIterator);
     }
 
     /**
@@ -237,9 +235,7 @@ public class BPlusTree {
 
         LeafNode leaf = root.get(key);
         Iterator<RecordId> leafIterator = leaf.scanGreaterEqual(key);
-        BPlusTreeIterator treeIterator = new BPlusTreeIterator(leaf,leafIterator);
-
-        return treeIterator;
+        return new BPlusTreeIterator(leaf,leafIterator);
     }
 
     /**
