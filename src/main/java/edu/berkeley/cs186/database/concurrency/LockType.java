@@ -21,7 +21,21 @@ public enum LockType {
         if (a == null || b == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
+        if (a == NL || b == NL) {
+            return true;
+        }
+        if (a == S && (b == S || b == IS)) {
+            return true;
+        }
+        if (a == IS && (b == S || b == IS || b == IX || b == SIX)) {
+            return true;
+        }
+        if (a == IX && (b == IS || b == IX)) {
+            return true;
+        }
+        if (a == SIX && b == IS) {
+            return true;
+        }
 
         return false;
     }
@@ -53,7 +67,18 @@ public enum LockType {
         if (parentLockType == null || childLockType == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
+        if (childLockType == NL) {
+            return true;
+        }
+        if (parentLockType == IS && (childLockType == S || childLockType == IS)) {
+            return true;
+        }
+        if (parentLockType == IX) {
+            return true;
+        }
+        if (parentLockType == SIX && (childLockType == X || childLockType == IX)) {
+            return true;
+        }
 
         return false;
     }
@@ -68,7 +93,24 @@ public enum LockType {
         if (required == null || substitute == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
+        if (required == NL) {
+            return true;
+        }
+        if (substitute == S && (required == S || required == IS)) {
+            return true;
+        }
+        if (substitute == X) {
+            return true;
+        }
+        if (substitute == IS && required == IS) {
+            return true;
+        }
+        if (substitute == IX && (required == IS || required == IX)) {
+            return true;
+        }
+        if (substitute == SIX && (required == SIX || required == IX || required == IS || required == S)) {
+            return true;
+        }
 
         return false;
     }
