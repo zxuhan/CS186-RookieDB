@@ -74,11 +74,13 @@ public class LockManager {
          * lock.
          */
         public void grantOrUpdateLock(Lock lock) {
+            long transNum = lock.transactionNum;
+            // Update current lock
             for (Lock l : locks) {
-                if (l.transactionNum == lock.transactionNum) {
+                if (l.transactionNum == transNum) {
                     l.lockType = lock.lockType;
 
-                    for (Lock k : getTransactionLocks(lock.transactionNum)) {
+                    for (Lock k : getTransactionLocks(transNum)) {
                         if (k.name.equals(lock.name)) {
                             k.lockType = lock.lockType;
                             return;
@@ -86,8 +88,10 @@ public class LockManager {
                     }
                 }
             }
+
+            // Grant new lock
             locks.add(lock);
-            getTransactionLocks(lock.transactionNum).add(lock);
+            getTransactionLocks(transNum).add(lock);
         }
 
         /**
@@ -95,13 +99,8 @@ public class LockManager {
          * lock has been granted before.
          */
         public void releaseLock(Lock lock) {
-            for (Lock l : locks) {
-                if (l.equals(lock)) {
-                    locks.remove(lock);
-                    getTransactionLocks(lock.transactionNum).remove(lock);
-                    break;
-                }
-            }
+            locks.remove(lock);
+            getTransactionLocks(lock.transactionNum).remove(lock);
             processQueue();
         }
 
@@ -130,13 +129,15 @@ public class LockManager {
                 if (checkCompatible(request.lock.lockType, transactionNum)) {
                     waitingQueue.pollFirst();
                     grantOrUpdateLock(request.lock);
-                    request.transaction.unblock();
 
                     if (!request.releasedLocks.isEmpty()) {
                         for (Lock lock : request.releasedLocks) {
-                            releaseLock(lock);
+                            // Probably release locks on other resources
+                            release(request.transaction, lock.name);
                         }
                     }
+
+                    request.transaction.unblock();
                 } else {
                     return;
                 }
@@ -174,6 +175,10 @@ public class LockManager {
         return resourceEntries.get(name);
     }
 
+    /**
+     * Helper method to fetch the transaction's lock list corresponding to `transaction number`.
+     * Inserts a new (empty) list into the map if no lock list exists yet.
+     */
     private List<Lock> getTransactionLocks(long transactionNum) {
         transactionLocks.putIfAbsent(transactionNum, new ArrayList<>());
         return transactionLocks.get(transactionNum);
