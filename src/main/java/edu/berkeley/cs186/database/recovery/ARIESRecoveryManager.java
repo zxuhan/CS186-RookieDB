@@ -256,8 +256,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
         long LSN = logManager.appendToLog(record);
         transactionEntry.lastLSN = LSN;
 
-        dirtyPageTable.putIfAbsent(pageNum, LSN);
-
+        //dirtyPageTable.putIfAbsent(pageNum, LSN);
+        dirtyPage(pageNum, LSN);
         return LSN;
     }
 
@@ -589,8 +589,92 @@ public class ARIESRecoveryManager implements RecoveryManager {
         long LSN = masterRecord.lastCheckpointLSN;
         // Set of transactions that have completed
         Set<Long> endedTransactions = new HashSet<>();
-        // TODO(proj5): implement
-        return;
+
+        Iterator<LogRecord> logRecords = logManager.scanFrom(LSN);
+
+        while (logRecords.hasNext()) {
+            LogRecord currRecord = logRecords.next();
+            LogType logType = currRecord.getType();
+
+            if (currRecord.getTransNum().isPresent()) {
+                long transNum = currRecord.getTransNum().get();
+                if (!transactionTable.containsKey(transNum)) {
+                    Transaction transaction = newTransaction.apply(transNum);
+                    startTransaction(transaction);
+                }
+
+                transactionTable.get(transNum).lastLSN = currRecord.getLSN();
+
+                if (logType == LogType.COMMIT_TRANSACTION) {
+                    transactionTable.get(transNum).transaction.setStatus(Transaction.Status.COMMITTING);
+                } else if (logType == LogType.ABORT_TRANSACTION) {
+                    transactionTable.get(transNum).transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                } else if (logType == LogType.END_TRANSACTION) {
+                    Transaction transaction = transactionTable.get(transNum).transaction;
+                    transaction.cleanup();
+                    transaction.setStatus(Transaction.Status.COMPLETE);
+                    transactionTable.remove(transNum);
+                    endedTransactions.add(transNum);
+                }
+            }
+
+            if (currRecord.getPageNum().isPresent()) {
+                long pageNum = currRecord.getPageNum().get();
+                if (logType == LogType.UPDATE_PAGE || logType == LogType.UNDO_UPDATE_PAGE) {
+                    dirtyPageTable.putIfAbsent(pageNum, currRecord.getLSN());
+                }
+                if (logType == LogType.FREE_PAGE || logType == LogType.UNDO_ALLOC_PAGE) {
+                    dirtyPageTable.remove(pageNum);
+                }
+            }
+
+            if (logType == LogType.END_CHECKPOINT) {
+                Map<Long, Long> dpt = currRecord.getDirtyPageTable();
+                dirtyPageTable.putAll(dpt);
+
+                Map<Long, Pair<Transaction.Status, Long>> txnTable = currRecord.getTransactionTable();
+                for (Map.Entry<Long, Pair<Transaction.Status, Long>> m : txnTable.entrySet()) {
+                    if (endedTransactions.contains(m.getKey())) {
+                        continue;
+                    }
+                    if (!transactionTable.containsKey(m.getKey())) {
+                        Transaction transaction = newTransaction.apply(m.getKey());
+                        startTransaction(transaction);
+                    }
+
+                    long prevLastLSN = transactionTable.get(m.getKey()).lastLSN;
+                    long currLastLSN = txnTable.get(m.getKey()).getSecond();
+                    Transaction.Status prevStatus = transactionTable.get(m.getKey()).transaction.getStatus();
+                    Transaction.Status currStatus = txnTable.get(m.getKey()).getFirst();
+
+                    transactionTable.get(m.getKey()).lastLSN = Math.max(prevLastLSN, currLastLSN);
+
+                    if (currStatus == Transaction.Status.COMPLETE) {
+                        transactionTable.get(m.getKey()).transaction.setStatus(Transaction.Status.COMPLETE);
+                    } else if (currStatus == Transaction.Status.ABORTING && prevStatus == Transaction.Status.RUNNING) {
+                        transactionTable.get(m.getKey()).transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                    } else if (currStatus == Transaction.Status.COMMITTING && prevStatus == Transaction.Status.RUNNING) {
+                        transactionTable.get(m.getKey()).transaction.setStatus(Transaction.Status.COMMITTING);
+                    }
+                }
+            }
+        }
+
+        for (Map.Entry<Long, TransactionTableEntry> m : transactionTable.entrySet()) {
+            Transaction transaction = m.getValue().transaction;
+            Transaction.Status status = transaction.getStatus();
+            if (status == Transaction.Status.COMMITTING) {
+                transaction.cleanup();
+                transaction.setStatus(Transaction.Status.COMPLETE);
+                long endLSN = logManager.appendToLog(new EndTransactionLogRecord(m.getKey(), m.getValue().lastLSN));
+                m.getValue().lastLSN = endLSN;
+                transactionTable.remove(m.getKey());
+            } else if (status == Transaction.Status.RUNNING) {
+                transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                long abortLSN = logManager.appendToLog(new AbortTransactionLogRecord(m.getKey(), m.getValue().lastLSN));
+                m.getValue().lastLSN = abortLSN;
+            }
+        }
     }
 
     /**
@@ -606,8 +690,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   the pageLSN is checked, and the record is redone if needed.
      */
     void restartRedo() {
-        // TODO(proj5): implement
-        return;
+
     }
 
     /**
@@ -624,8 +707,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   and remove from transaction table.
      */
     void restartUndo() {
-        // TODO(proj5): implement
-        return;
+
     }
 
     /**
@@ -657,5 +739,18 @@ public class ARIESRecoveryManager implements RecoveryManager {
         public int compare(Pair<A, B> p0, Pair<A, B> p1) {
             return p1.getFirst().compareTo(p0.getFirst());
         }
+    }
+
+    private boolean isValidStatus(Transaction.Status A, Transaction.Status B) {
+        if (A == Transaction.Status.RUNNING) {
+            return B == Transaction.Status.COMMITTING || B == Transaction.Status.ABORTING || B == Transaction.Status.COMPLETE;
+        }
+        if (A == Transaction.Status.COMMITTING) {
+            return B == Transaction.Status.COMPLETE;
+        }
+        if (A == Transaction.Status.ABORTING) {
+            return B == Transaction.Status.COMPLETE;
+        }
+        return false;
     }
 }
