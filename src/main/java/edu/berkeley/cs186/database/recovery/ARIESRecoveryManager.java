@@ -690,7 +690,53 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   the pageLSN is checked, and the record is redone if needed.
      */
     void restartRedo() {
+        long leastLSN = Long.MAX_VALUE;
+        for (Map.Entry<Long, Long> m : dirtyPageTable.entrySet()) {
+            if (m.getValue() < leastLSN) {
+                leastLSN = m.getValue();
+            }
+        }
 
+        Iterator<LogRecord> records = logManager.scanFrom(leastLSN);
+
+        while (records.hasNext()) {
+            LogRecord record = records.next();
+            if (!record.isRedoable()) {
+                continue;
+            }
+
+            LogType logType = record.getType();
+            if (logType == LogType.FREE_PART || logType == LogType.ALLOC_PART
+                    || logType == LogType.UNDO_ALLOC_PART || logType == LogType.UNDO_FREE_PART) {
+                record.redo(this, diskSpaceManager, bufferManager);
+            }
+
+            if (logType == LogType.ALLOC_PAGE || logType == LogType.UNDO_FREE_PAGE) {
+                record.redo(this, diskSpaceManager, bufferManager);
+            }
+
+            if (logType == LogType.UPDATE_PAGE || logType == LogType.UNDO_UPDATE_PAGE
+                    || logType == LogType.FREE_PAGE || logType == LogType.UNDO_ALLOC_PAGE) {
+                long pageNum = record.getPageNum().get();
+                if (!dirtyPageTable.containsKey(pageNum)) {
+                    continue;
+                }
+
+                long LSN = record.getLSN();
+                if (LSN < dirtyPageTable.get(pageNum)) {
+                    continue;
+                }
+
+                Page page = bufferManager.fetchPage(new DummyLockContext(), pageNum);
+                try {
+                    if (page.getPageLSN() < LSN) {
+                        record.redo(this, diskSpaceManager, bufferManager);
+                    }
+                } finally {
+                    page.unpin();
+                }
+            }
+        }
     }
 
     /**
@@ -707,7 +753,37 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   and remove from transaction table.
      */
     void restartUndo() {
+        // LSN -> transaction number
+        PriorityQueue<Pair<Long, Long>> maxPQ = new PriorityQueue<>(new PairFirstReverseComparator<>());
 
+        for (Map.Entry<Long, TransactionTableEntry> m : transactionTable.entrySet()) {
+            maxPQ.add(new Pair<>(m.getValue().lastLSN, m.getKey()));
+        }
+
+        while (!maxPQ.isEmpty()) {
+            Pair<Long, Long> pair = maxPQ.poll();
+            long largestLSN = pair.getFirst();
+            TransactionTableEntry transactionEntry= transactionTable.get(pair.getSecond());
+
+            LogRecord record = logManager.fetchLogRecord(largestLSN);
+            long nextLSN = record.getUndoNextLSN().orElse(record.getPrevLSN().get());
+
+            if (record.isUndoable()) {
+                LogRecord CLR = record.undo(transactionEntry.lastLSN);
+                transactionEntry.lastLSN = logManager.appendToLog(CLR);
+                CLR.redo(this, diskSpaceManager, bufferManager);
+            }
+
+            if (nextLSN == 0L) {
+                transactionEntry.transaction.cleanup();
+                transactionEntry.transaction.setStatus(Transaction.Status.COMPLETE);
+                long LSN = logManager.appendToLog(new EndTransactionLogRecord(pair.getSecond(), transactionEntry.lastLSN));
+                transactionEntry.lastLSN = LSN;
+                transactionTable.remove(pair.getSecond());
+            } else {
+                maxPQ.add(new Pair<>(nextLSN, pair.getSecond()));
+            }
+        }
     }
 
     /**
@@ -739,18 +815,5 @@ public class ARIESRecoveryManager implements RecoveryManager {
         public int compare(Pair<A, B> p0, Pair<A, B> p1) {
             return p1.getFirst().compareTo(p0.getFirst());
         }
-    }
-
-    private boolean isValidStatus(Transaction.Status A, Transaction.Status B) {
-        if (A == Transaction.Status.RUNNING) {
-            return B == Transaction.Status.COMMITTING || B == Transaction.Status.ABORTING || B == Transaction.Status.COMPLETE;
-        }
-        if (A == Transaction.Status.COMMITTING) {
-            return B == Transaction.Status.COMPLETE;
-        }
-        if (A == Transaction.Status.ABORTING) {
-            return B == Transaction.Status.COMPLETE;
-        }
-        return false;
     }
 }
